@@ -1,0 +1,42 @@
+name: grenny-workshop-manual-visual-pdf-publisher
+
+services:
+  workshop-pdf:
+    image: grenny-workshop-manual-visual-pdf-publisher:local
+    build:
+      context: ./engine
+      dockerfile: Dockerfile
+    container_name: grenny-workshop-manual-visual-pdf-publisher
+    user: "${PUID:-1000}:${PGID:-1000}"
+    network_mode: none
+    init: true
+    environment:
+      PDF_TITLE: ${PDF_TITLE:-INEOS Workshop Manual}
+      PDF_FILENAME: ${PDF_FILENAME:-ineos-workshop-manual.pdf}
+      PDF_CONCURRENCY: ${PDF_CONCURRENCY:-0}
+      PDF_SAMPLE_SIZE: ${PDF_SAMPLE_SIZE:-0}
+      PDF_SELECTION_FILE: /work/topic-selection.json
+      PDF_MERGE_ONLY: ${PDF_MERGE_ONLY:-0}
+      PDF_ALLOW_PARTIAL: ${PDF_ALLOW_PARTIAL:-0}
+      PDF_FORCE: ${PDF_FORCE:-0}
+      PDF_STATE_CHECKPOINT_INTERVAL: ${PDF_STATE_CHECKPOINT_INTERVAL:-25}
+      PDF_PROGRESS_INTERVAL: ${PDF_PROGRESS_INTERVAL:-10}
+      PDF_HEARTBEAT_SECONDS: ${PDF_HEARTBEAT_SECONDS:-60}
+      PDF_CAPTURE_SCALE: ${PDF_CAPTURE_SCALE:-0.75}
+      PDF_IMAGE_MAX_DIMENSION: ${PDF_IMAGE_MAX_DIMENSION:-1400}
+      PDF_IMAGE_JPEG_QUALITY: ${PDF_IMAGE_JPEG_QUALITY:-78}
+    volumes:
+      - "${WORKSHOP_SOURCE_DIR:?Set WORKSHOP_SOURCE_DIR}:/source:ro"
+      - "${WORKSHOP_RUNTIME_DIR:?Set WORKSHOP_RUNTIME_DIR}:/runtime:ro"
+      - "${WORKSHOP_TREE_DIR:?Set WORKSHOP_TREE_DIR}:/trees:ro"
+      - "${PDF_OUTPUT_DIR:?Set PDF_OUTPUT_DIR}:/output:rw"
+      - "${PDF_WORK_DIR:?Set PDF_WORK_DIR}:/work:rw"
+    read_only: true
+    tmpfs:
+      - /tmp:size=4g,mode=1777
+    shm_size: ${PDF_SHM_SIZE:-16gb}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: "no"

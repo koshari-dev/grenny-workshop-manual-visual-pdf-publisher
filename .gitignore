@@ -1,0 +1,19 @@
+# Private configuration
+.env
+
+# Generated publication data
+*.pdf
+*.log
+*.tmp
+publisher-unfiltered-selection.json
+
+# Local working data and outputs
+work/
+output/
+pdf-work/
+pdf-output/
+
+# Node dependencies and OS files
+node_modules/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Workshop PDF Publisher</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#151a20;color:#e8edf2}
+body{max-width:1100px;margin:30px auto;padding:0 18px}
+h1{font-size:27px;margin-bottom:4px}.sub{color:#aab5c0;margin-top:0}
+section{background:#202832;border:1px solid #34414e;border-radius:10px;padding:18px;margin:18px 0}
+h2{font-size:18px;margin:0 0 14px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+label{display:block;font-size:13px;color:#bac6d1}
+input,select{box-sizing:border-box;width:100%;margin-top:5px;padding:10px;border-radius:6px;border:1px solid #526170;background:#111820;color:#fff}
+button{padding:11px 17px;border:0;border-radius:6px;background:#3278c8;color:white;font-weight:650;cursor:pointer;margin:5px 7px 5px 0}
+button:disabled{opacity:.4;cursor:not-allowed}.stop{background:#a33d3d}.secondary{background:#465563}
+.status{font-weight:700}.green{color:#73d69b}.red{color:#ff8b8b}
+.selected-list{max-height:360px;overflow:auto;border:1px solid #34414e;border-radius:6px;padding:8px;margin:10px 0}.selected-item{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:7px;border-bottom:1px solid #34414e;font-size:13px}.selected-item:last-child{border-bottom:0}.selected-item span{overflow-wrap:anywhere}.selected-item button{flex-shrink:0;margin:0;padding:5px 10px;background:#465563}\npre{white-space:pre-wrap;overflow-wrap:anywhere;background:#10161c;padding:13px;border-radius:6px;height:300px;overflow:auto;font:12px/1.5 monospace}
+.note{font-size:13px;color:#aab5c0}.wide{grid-column:1/-1}
+@media(max-width:700px){.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<h1>Workshop PDF Publisher</h1>
+<p class="sub">Local control panel · Docker publisher · Port 4177</p>
+
+<section>
+<h2>Publisher status</h2>
+<p class="status" id="status">Checking...</p>
+<p class="note" id="details">Waiting for publisher status.</p>
+<button id="start">Start publishing</button>
+<button id="stop" class="stop" disabled>Stop publishing</button>
+<button id="open" class="secondary">Open output folder</button>
+</section>
+
+<section>
+<h2>Workshop folders</h2>
+<div class="grid">
+<label class="wide">Workshop topics source folder
+<input id="WORKSHOP_SOURCE_DIR"></label>
+<label>Runtime folder
+<input id="WORKSHOP_RUNTIME_DIR"></label>
+<label>Workshop tree folder
+<input id="WORKSHOP_TREE_DIR"></label>
+<label>PDF output folder
+<input id="PDF_OUTPUT_DIR"></label>
+<label>Working/cache folder
+<input id="PDF_WORK_DIR"></label>
+</div>
+</section>
+
+<section>
+<h2>Publication settings</h2>
+<div class="grid">
+<label>PDF title<input id="PDF_TITLE"></label>
+<label>PDF filename<input id="PDF_FILENAME"></label>
+<label>Procedures to publish
+<select id="PDF_SAMPLE_SIZE">
+<option value="10">10 — quick test</option>
+<option value="100">100 — larger test</option>
+<option value="500">500 — extended test</option>
+<option value="0">0 — ALL procedures</option>
+</select></label>
+<label>Rendering concurrency
+<select id="PDF_CONCURRENCY">
+<option value="1">1 — safest for this computer</option>
+<option value="2">2</option>
+<option value="0">0 — automatic / all CPUs</option>
+</select></label>
+<label>Shared memory size<input id="PDF_SHM_SIZE"></label>
+<label>Allow partial publication
+<select id="PDF_ALLOW_PARTIAL"><option value="0">No</option><option value="1">Yes</option></select></label>
+<label>Force rerender existing procedures
+<select id="PDF_FORCE"><option value="0">No — reuse cached work</option><option value="1">Yes — rerender</option></select></label>
+<label>Merge cached PDFs only
+<select id="PDF_MERGE_ONLY"><option value="0">No</option><option value="1">Yes</option></select></label>
+<label>Progress update interval<input id="PDF_PROGRESS_INTERVAL" type="number" min="1"></label>
+<label>Checkpoint interval<input id="PDF_STATE_CHECKPOINT_INTERVAL" type="number" min="1"></label>
+<label>Heartbeat seconds<input id="PDF_HEARTBEAT_SECONDS" type="number" min="1"></label>
+</div>
+<p class="note">A sample size of 0 means all procedures. Existing cached procedure PDFs are kept in the work folder and can be reused. Force rerender is normally best left off.</p>
+<button id="save" class="secondary">Save settings</button>
+<span id="message" class="note"></span>
+</section>
+
+<section id="topicSelection">
+<h2>Choose workshop procedures</h2>
+<p class="note" id="catalogueStatus">Loading workshop catalogue...</p>
+
+<div class="grid">
+<label>1. Workshop manual
+<select id="manualSelect" disabled>
+<option value="">Loading manuals...</option>
+</select></label>
+
+<label>2. Section / subsection
+<select id="sectionSelect" disabled>
+<option value="">Choose a manual first</option>
+</select></label>
+
+<label class="wide">3. Procedure
+<select id="topicSelect" disabled>
+<option value="">Choose a section first</option>
+</select></label>
+</div>
+
+<button id="addProcedure" disabled>Add procedure</button>
+<button id="addSection" class="secondary" disabled>Add entire section</button>
+<button id="selectAll" class="secondary" disabled>Select all procedures</button>
+<button id="clearSelection" class="stop">Clear selection</button>
+
+<div id="selectionResults" hidden>
+<h2 style="margin-top:22px">Selected procedures</h2>
+<p class="note" id="selectionCount">0 procedures selected</p>
+<div id="selectedList" class="selected-list">
+<p class="note">No procedures selected.</p>
+</div>
+
+<button id="saveSelection">Save procedure selection</button>
+<span id="selectionMessage" class="note"></span>
+</div>
+</section>
+
+<section>
+<h2>Live publisher log</h2>
+<pre id="log">No publishing job has been started in this session.</pre>
+</section>
+
+<script>
+const fields = [
+"WORKSHOP_SOURCE_DIR","WORKSHOP_RUNTIME_DIR","WORKSHOP_TREE_DIR",
+"PDF_OUTPUT_DIR","PDF_WORK_DIR","PDF_TITLE","PDF_FILENAME",
+"PDF_SAMPLE_SIZE","PDF_CONCURRENCY","PDF_SHM_SIZE","PDF_ALLOW_PARTIAL",
+"PDF_FORCE","PDF_MERGE_ONLY","PDF_PROGRESS_INTERVAL",
+"PDF_STATE_CHECKPOINT_INTERVAL","PDF_HEARTBEAT_SECONDS"
+];
+let loaded = false;
+let previousLogCount = 0;
+const $ = id => document.getElementById(id);
+
+function message(text){ $("message").textContent = text; }
+
+async function api(url, body){
+  const response = await fetch(url, {
+    method: body ? "POST" : "GET",
+    headers: body ? {"Content-Type":"application/json"} : {},
+    body: body ? JSON.stringify(body) : undefined
+  });
+  const data = await response.json();
+  if(!response.ok) throw new Error(data.error || "Request failed");
+  return data;
+}
+
+function fill(config){
+  for(const key of fields) if(config[key] !== undefined && $(key)) $(key).value = config[key];
+  loaded = true;
+}
+
+async function refresh(){
+  try{
+    const data = await api("/api/status");
+    if(!loaded) fill(data.config);
+    $("status").textContent = data.running ? "PUBLISHING" : (data.exitCode === 0 ? "Last job completed successfully" : data.exitCode !== null ? `Last job ended (exit ${data.exitCode})` : "READY");
+    $("status").className = "status " + (data.running ? "green" : data.exitCode === 0 ? "green" : data.exitCode !== null ? "red" : "");
+    $("details").textContent = data.running ? `Started: ${data.startedAt || "just now"}` : "Publisher is idle.";
+    $("start").disabled = data.running;
+    $("stop").disabled = !data.running;
+    if(data.logs.length !== previousLogCount){
+      $("log").textContent = data.logs.map(x => `[${x.time}] ${x.text}`).join("");
+      $("log").scrollTop = $("log").scrollHeight;
+      previousLogCount = data.logs.length;
+    }
+  }catch(e){ $("status").textContent = "Control panel connection error"; $("details").textContent = e.message; }
+}
+
+$("save").onclick = async () => {
+  try{
+    const values = {};
+    for(const key of fields) values[key] = $(key).value;
+    await api("/api/config", values);
+    message("Settings saved to .env");
+  }catch(e){ message(e.message); }
+};
+
+$("start").onclick = async () => {
+  const sampleSize = Number($("PDF_SAMPLE_SIZE").value);
+  let mode;
+  let allowFullLibrary = false;
+
+  if (!Number.isInteger(sampleSize) || sampleSize < 0) {
+    message("Sample size must be 0 or a positive whole number.");
+    return;
+  }
+
+  if (sampleSize > 0) {
+    if (!confirm(`Create a sample of ${sampleSize} procedures from the eligible library? Your saved selection will not be used or changed.`)) return;
+    mode = "sample";
+  } else {
+    let selection;
+    try { selection = await api("/api/selection"); }
+    catch(e) { message(e.message); return; }
+
+    const hasSelection = selection.enabled === true &&
+      Array.isArray(selection.selected) && selection.selected.length > 0;
+
+    if (hasSelection && confirm(`Publish the ${selection.selected.length} procedures in your saved selection?`)) {
+      mode = "selection";
+    } else {
+      if (!confirm("FULL LIBRARY WARNING: publish ALL eligible procedures? This may take a very long time and create a very large PDF. Your saved selection will remain unchanged.")) return;
+      mode = "all";
+      allowFullLibrary = true;
+    }
+  }
+
+  try {
+    await api("/api/config", Object.fromEntries(fields.map(k => [k,$(k).value])));
+    await api("/api/start", { mode, allowFullLibrary });
+    message(`Publisher started in ${mode} mode.`);
+    previousLogCount = 0;
+  } catch(e) { message(e.message); }
+  refresh();
+};
+
+$("stop").onclick = async () => {
+  if(!confirm("Interrupt the running publisher?")) return;
+  try{ await api("/api/stop", {}); message("Stop requested."); }
+  catch(e){ message(e.message); }
+  refresh();
+};
+
+$("open").onclick = async () => {
+  try{ await api("/api/open-output", {}); message("Opening output folder."); }
+  catch(e){ message(e.message); }
+};
+
+
+let catalogue = null;
+let selectedItems = [];
+let cataloguePromise = null;
+
+const selectionKey = item => `${item.rootId}:${item.id}`;
+
+function populateSelect(select, items, placeholder, labelFn) {
+  select.replaceChildren(new Option(placeholder, ""));
+  for (const item of items) {
+    select.add(new Option(labelFn(item), item.id || item.title));
+  }
+}
+
+function currentManual() {
+  return catalogue?.manuals.find(x => x.id === $("manualSelect").value);
+}
+
+function currentSection() {
+  return currentManual()?.sections.find(x => x.title === $("sectionSelect").value);
+}
+
+function updateSections() {
+  const manual = currentManual();
+  $("sectionSelect").disabled = !manual;
+  populateSelect($("sectionSelect"), manual?.sections || [],
+    manual ? "Choose a section" : "Choose a manual first",
+    x => `${x.title} (${x.topics.length})`);
+  updateTopics();
+}
+
+function updateTopics() {
+  const section = currentSection();
+  $("topicSelect").disabled = !section;
+  populateSelect($("topicSelect"), section?.topics || [],
+    section ? "Choose a procedure" : "Choose a section first",
+    x => `${x.title} (${x.instructionCount} steps)`);
+  $("addProcedure").disabled = !section || !section.topics.length;
+  $("addSection").disabled = !section || !section.topics.length;
+}
+
+function addProcedures(items) {
+  const existing = new Set(selectedItems.map(selectionKey));
+  let added = 0;
+  for (const item of items) {
+    const key = selectionKey(item);
+    if (existing.has(key)) continue;
+    existing.add(key);
+    selectedItems.push({
+      rootId: item.rootId,
+      id: item.id,
+      title: item.title,
+      manualTitle: item.manualTitle || currentManual()?.title || "",
+      sectionTitle: item.sectionTitle || currentSection()?.title || "",
+      instructionCount: item.instructionCount
+    });
+    added++;
+  }
+  renderSelection();
+  $("selectionMessage").textContent = `${added} procedure(s) added.`;
+}
+
+function renderSelection() {
+  const list = $("selectedList");
+  list.replaceChildren();
+  $("selectionCount").textContent =
+    `${selectedItems.length.toLocaleString()} procedures selected`;
+
+  if (!selectedItems.length) {
+    const empty = document.createElement("p");
+    empty.className = "note";
+    empty.textContent = "No procedures selected.";
+    list.append(empty);
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  for (const item of selectedItems) {
+    const row = document.createElement("div");
+    row.className = "selected-item";
+
+    const description = document.createElement("span");
+    description.textContent =
+      `${item.manualTitle || item.rootId} › ${item.sectionTitle || "Section"} › ${item.title || item.id}`;
+
+    const remove = document.createElement("button");
+    remove.textContent = "Remove";
+    remove.type = "button";
+    remove.onclick = () => {
+      selectedItems = selectedItems.filter(x => selectionKey(x) !== selectionKey(item));
+      renderSelection();
+    };
+
+    row.append(description, remove);
+    fragment.append(row);
+  }
+  list.append(fragment);
+}
+
+async function loadTopicSelection() {
+  $("catalogueStatus").textContent =
+    "Scanning workshop catalogue. This can take a few minutes on the first load.";
+
+  cataloguePromise = api("/api/catalogue");
+  const [data, saved] = await Promise.all([
+    cataloguePromise,
+    api("/api/selection")
+  ]);
+
+  catalogue = data;
+  const lookup = new Map();
+  for (const manual of catalogue.manuals) {
+    for (const section of manual.sections) {
+      for (const topic of section.topics) {
+        lookup.set(selectionKey(topic), {
+          ...topic,
+          manualTitle: manual.title,
+          sectionTitle: section.title
+        });
+      }
+    }
+  }
+
+  selectedItems = (saved.selected || []).map(item => lookup.get(selectionKey(item)))
+    .filter(Boolean);
+
+  populateSelect($("manualSelect"), catalogue.manuals,
+    "Choose a manual", x => `${x.title} (${x.sections.reduce((n,s) => n+s.topics.length,0)} procedures)`);
+  $("manualSelect").disabled = false;
+  $("selectAll").disabled = false;
+
+  $("catalogueStatus").textContent =
+    `Catalogue loaded: ${catalogue.eligibleCount.toLocaleString()} eligible procedures across ${catalogue.manuals.length} manuals.`;
+  updateSections();
+  renderSelection();
+  $("selectionResults").hidden = false;
+}
+
+$("manualSelect").onchange = updateSections;
+$("sectionSelect").onchange = updateTopics;
+
+$("addProcedure").onclick = () => {
+  const section = currentSection();
+  const topic = section?.topics.find(x => x.id === $("topicSelect").value);
+  if (topic) addProcedures([topic]);
+};
+
+$("addSection").onclick = () => {
+  const section = currentSection();
+  if (section) addProcedures(section.topics);
+};
+
+$("selectAll").onclick = () => {
+  if (!catalogue) return;
+  const all = catalogue.manuals.flatMap(manual =>
+    manual.sections.flatMap(section => section.topics.map(topic => ({
+      ...topic,
+      manualTitle: manual.title,
+      sectionTitle: section.title
+    })))
+  );
+  addProcedures(all);
+};
+
+$("clearSelection").onclick = () => {
+  selectedItems = [];
+  renderSelection();
+  $("selectionMessage").textContent = "Selection cleared. Save to store this change.";
+};
+
+$("saveSelection").onclick = async () => {
+  try {
+    const result = await api("/api/selection", {
+      enabled: selectedItems.length > 0,
+      selected: selectedItems.map(({rootId,id}) => ({rootId,id}))
+    });
+    $("selectionMessage").textContent =
+      `Saved ${result.count.toLocaleString()} selected procedures.`;
+  } catch (error) {
+    $("selectionMessage").textContent = error.message;
+  }
+};
+
+loadTopicSelection().catch(error => {
+  $("catalogueStatus").textContent = `Could not load catalogue: ${error.message}`;
+  $("selectionResults").hidden = false;
+  $("selectionMessage").textContent = "Saved selection could not be restored. Retry by refreshing the page.";
+});
+
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>
