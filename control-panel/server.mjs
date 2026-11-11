@@ -15,7 +15,7 @@ const allowed = [
   "PDF_CONCURRENCY", "PDF_SAMPLE_SIZE", "PDF_MERGE_ONLY",
   "PDF_ALLOW_PARTIAL", "PDF_FORCE", "PDF_SHM_SIZE",
   "PDF_STATE_CHECKPOINT_INTERVAL", "PDF_PROGRESS_INTERVAL",
-  "PDF_HEARTBEAT_SECONDS", "PUID", "PGID"
+  "PDF_HEARTBEAT_SECONDS", "PDF_GPU_MODE", "PDF_BROWSER_CDP_URL", "PUID", "PGID"
 ];
 
 let child = null;
@@ -356,7 +356,20 @@ const server = http.createServer(async (req, res) => {
           { mode: 0o600 });
       }
 
-      const composeArgs = ["compose", "run", "--rm"];
+      const gpuMode = config.PDF_GPU_MODE || "off";
+      if (!["off", "brave-cdp"].includes(gpuMode)) {
+        throw new Error("PDF_GPU_MODE must be off or brave-cdp.");
+      }
+
+      const composeArgs = ["compose"];
+      if (gpuMode === "brave-cdp") {
+        if (!fs.existsSync(path.join(ROOT, "docker-compose.gpu.yml"))) {
+          throw new Error("GPU Compose override is missing.");
+        }
+        composeArgs.push("-f", "docker-compose.yml", "-f", "docker-compose.gpu.yml");
+        addLog("Hardware rendering enabled: using host Brave through CDP.");
+      }
+      composeArgs.push("run", "--rm");
       if (mode === "sample" || mode === "all") {
         composeArgs.push("-e", "PDF_SELECTION_FILE=/work/publisher-unfiltered-selection.json");
       }

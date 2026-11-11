@@ -57,6 +57,36 @@ Keep the terminal open while using the control panel. Press Ctrl+C to stop it.
 
 The control panel listens on the local machine only.
 
+### Optional hardware-accelerated rendering
+
+The default configuration runs the publishing container with network access
+disabled. For hardware-accelerated rendering, the publisher can connect to a
+separate Brave browser running on the host through Chrome DevTools Protocol
+(CDP).
+
+1. Install Brave on the Linux host and confirm that its GPU acceleration works.
+2. Start a separate Brave instance with its own profile and a loopback-only
+   debugging endpoint:
+
+       brave-browser --user-data-dir="$HOME/.cache/brave-pdf-cdp" --no-first-run --no-default-browser-check --remote-debugging-address=127.0.0.1 --remote-debugging-port=9222 --enable-gpu --enable-webgl about:blank
+
+   Keep this browser instance running while publishing. Its profile is
+   separate from your normal Brave profile.
+3. In `.env`, set:
+
+       PDF_GPU_MODE=brave-cdp
+       PDF_BROWSER_CDP_URL=http://127.0.0.1:9222
+
+4. Start or restart the control panel and use it normally.
+
+To return to the standard isolated Docker mode, set `PDF_GPU_MODE=off`.
+
+The GPU mode uses host networking for the publishing container so it can reach
+the host browser. Keep the Brave debugging endpoint bound to `127.0.0.1`;
+do not expose the CDP port to your network. GPU acceleration depends on the
+host browser, graphics drivers and hardware. Check `brave://gpu` in Brave if
+hardware acceleration is not being used.
+
 ## Publication safety
 
 - Sample mode processes the configured sample size.

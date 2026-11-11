@@ -1,0 +1,5 @@
+services:
+  workshop-pdf:
+    network_mode: host
+    environment:
+      PDF_BROWSER_CDP_URL: ${PDF_BROWSER_CDP_URL:-http://127.0.0.1:9222}
