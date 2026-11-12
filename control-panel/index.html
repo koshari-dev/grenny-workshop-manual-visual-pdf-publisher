@@ -30,6 +30,7 @@ button:disabled{opacity:.4;cursor:not-allowed}.stop{background:#a33d3d}.secondar
 <p class="status" id="status">Checking...</p>
 <p class="note" id="details">Waiting for publisher status.</p>
 <button id="start">Start publishing</button>
+<button id="extract" class="secondary">Extract JPGs from saved selection</button>
 <button id="stop" class="stop" disabled>Stop publishing</button>
 <button id="open" class="secondary">Open output folder</button>
 </section>
@@ -88,6 +89,13 @@ button:disabled{opacity:.4;cursor:not-allowed}.stop{background:#a33d3d}.secondar
 <h2>Choose workshop procedures</h2>
 <p class="note" id="catalogueStatus">Loading workshop catalogue...</p>
 
+<label class="wide">Search all workshop procedures
+<input id="topicSearch" type="search"
+  placeholder="Search by topic, procedure title, section or document ID...">
+</label>
+<p class="note" id="topicSearchStatus">Search becomes available when the catalogue has loaded.</p>
+<div id="topicSearchResults" class="selected-list" hidden></div>
+
 <div class="grid">
 <label>1. Workshop manual
 <select id="manualSelect" disabled>
@@ -141,11 +149,13 @@ const $ = id => document.getElementById(id);
 
 function message(text){ $("message").textContent = text; }
 
-async function api(url, body){
+async function api(url, body, method){
+  const requestMethod = method || (body !== undefined ? "POST" : "GET");
   const response = await fetch(url, {
-    method: body ? "POST" : "GET",
-    headers: body ? {"Content-Type":"application/json"} : {},
-    body: body ? JSON.stringify(body) : undefined
+    method: requestMethod,
+    headers: body !== undefined ? {"Content-Type":"application/json"} : {},
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+    cache: "no-store"
   });
   const data = await response.json();
   if(!response.ok) throw new Error(data.error || "Request failed");
@@ -161,10 +171,11 @@ async function refresh(){
   try{
     const data = await api("/api/status");
     if(!loaded) fill(data.config);
-    $("status").textContent = data.running ? "PUBLISHING" : (data.exitCode === 0 ? "Last job completed successfully" : data.exitCode !== null ? `Last job ended (exit ${data.exitCode})` : "READY");
+    $("status").textContent = data.running ? `${(data.jobName || "JOB").toUpperCase()} RUNNING` : (data.exitCode === 0 ? `Last ${data.jobName || "job"} completed successfully` : data.exitCode !== null ? `Last ${data.jobName || "job"} ended (exit ${data.exitCode})` : "READY");
     $("status").className = "status " + (data.running ? "green" : data.exitCode === 0 ? "green" : data.exitCode !== null ? "red" : "");
-    $("details").textContent = data.running ? `Started: ${data.startedAt || "just now"}` : "Publisher is idle.";
+    $("details").textContent = data.running ? `${data.jobName || "Job"} started: ${data.startedAt || "just now"}` : "No job is running.";
     $("start").disabled = data.running;
+    $("extract").disabled = data.running;
     $("stop").disabled = !data.running;
     if(data.logs.length !== previousLogCount){
       $("log").textContent = data.logs.map(x => `[${x.time}] ${x.text}`).join("");
@@ -222,8 +233,35 @@ $("start").onclick = async () => {
   refresh();
 };
 
+$("extract").onclick = async () => {
+  let selection;
+  try {
+    selection = await api("/api/selection");
+  } catch(e) {
+    message(e.message);
+    return;
+  }
+
+  const count = Array.isArray(selection.selected) ? selection.selected.length : 0;
+  if (selection.enabled !== true || count === 0) {
+    message("Enable and save a non-empty procedure selection first.");
+    return;
+  }
+
+  if (!confirm(`Extract original JPG images for ${count} selected procedure(s)? This will not render or modify any PDFs.`)) return;
+
+  try {
+    await api("/api/extract-images", {});
+    message("JPEG extraction started.");
+    previousLogCount = 0;
+  } catch(e) {
+    message(e.message);
+  }
+  refresh();
+};
+
 $("stop").onclick = async () => {
-  if(!confirm("Interrupt the running publisher?")) return;
+  if(!confirm("Interrupt the running job?")) return;
   try{ await api("/api/stop", {}); message("Stop requested."); }
   catch(e){ message(e.message); }
   refresh();
@@ -333,6 +371,88 @@ function renderSelection() {
   list.append(fragment);
 }
 
+function renderTopicSearch() {
+  const results = $("topicSearchResults");
+  const status = $("topicSearchStatus");
+  const query = $("topicSearch").value.trim().toLocaleLowerCase();
+
+  results.replaceChildren();
+
+  if (!query) {
+    results.hidden = true;
+    status.textContent = "Search by topic, procedure title, section or document ID.";
+    return;
+  }
+
+  if (!catalogue) {
+    status.textContent = "Catalogue is still loading.";
+    results.hidden = true;
+    return;
+  }
+
+  const terms = query.split(/\\s+/);
+  const matches = catalogue.manuals.flatMap(manual =>
+    manual.sections.flatMap(section =>
+      section.topics.map(topic => ({
+        ...topic,
+        manualTitle: manual.title,
+        sectionTitle: section.title
+      }))
+    )
+  ).filter(topic => {
+    const searchable = [
+      topic.id,
+      topic.title,
+      topic.manualTitle,
+      topic.sectionTitle
+    ].join(" ").toLocaleLowerCase();
+
+    return terms.every(term => searchable.includes(term));
+  });
+
+  status.textContent = matches.length
+    ? `${matches.length.toLocaleString()} matching procedure(s).` +
+      (matches.length > 100 ? " Showing the first 100." : "")
+    : "No matching procedures found.";
+
+  results.hidden = false;
+
+  if (!matches.length) {
+    const empty = document.createElement("p");
+    empty.className = "note";
+    empty.textContent = "Try another topic name, section or document ID.";
+    results.append(empty);
+    return;
+  }
+
+  const existing = new Set(selectedItems.map(selectionKey));
+
+  for (const topic of matches.slice(0, 100)) {
+    const row = document.createElement("div");
+    row.className = "selected-item";
+
+    const description = document.createElement("span");
+    description.textContent =
+      `${topic.manualTitle} › ${topic.sectionTitle} › ` +
+      `${topic.title || topic.id} (${topic.id})`;
+
+    const add = document.createElement("button");
+    add.type = "button";
+
+    const alreadySelected = existing.has(selectionKey(topic));
+    add.textContent = alreadySelected ? "Selected" : "Add";
+    add.disabled = alreadySelected;
+
+    add.onclick = () => {
+      addProcedures([topic]);
+      renderTopicSearch();
+    };
+
+    row.append(description, add);
+    results.append(row);
+  }
+}
+
 async function loadTopicSelection() {
   $("catalogueStatus").textContent =
     "Scanning workshop catalogue. This can take a few minutes on the first load.";
@@ -369,11 +489,13 @@ async function loadTopicSelection() {
     `Catalogue loaded: ${catalogue.eligibleCount.toLocaleString()} eligible procedures across ${catalogue.manuals.length} manuals.`;
   updateSections();
   renderSelection();
+  renderTopicSearch();
   $("selectionResults").hidden = false;
 }
 
 $("manualSelect").onchange = updateSections;
 $("sectionSelect").onchange = updateTopics;
+$("topicSearch").addEventListener("input", renderTopicSearch);
 
 $("addProcedure").onclick = () => {
   const section = currentSection();

@@ -23,6 +23,7 @@ let running = false;
 let exitCode = null;
 let logs = [];
 let startedAt = null;
+let jobName = null;
 
 function readEnv() {
   const result = {};
@@ -83,7 +84,7 @@ function saveEnv(values) {
 }
 
 function status() {
-  return { running, exitCode, startedAt, logs, config: readEnv() };
+  return { running, exitCode, startedAt, jobName, logs, config: readEnv() };
 }
 
 
@@ -206,7 +207,7 @@ const server = http.createServer(async (req, res) => {
         item.instructionCount > 0
       );
 
-      const index = await loadWorkshopTreeIndex(treeRoot);
+      const index = await loadWorkshopTreeIndex(treeRoot, config.PDF_WORK_DIR || "");
       const plan = buildWorkshopTreePlan(eligible, index);
       const entriesByKey = new Map();
 
@@ -277,7 +278,7 @@ const server = http.createServer(async (req, res) => {
         throw new Error("Workshop tree folder is missing or inaccessible.");
       }
 
-      const index = await loadWorkshopTreeIndex(treeRoot);
+      const index = await loadWorkshopTreeIndex(treeRoot, config.PDF_WORK_DIR || "");
 
       return send(res, 200, {
         treeDirectory: index.treeDirectory,
@@ -378,6 +379,7 @@ const server = http.createServer(async (req, res) => {
       logs = [];
       exitCode = null;
       startedAt = new Date().toISOString();
+      jobName = "Publisher";
       addLog(`Starting Docker PDF publisher in ${mode} mode...`);
       running = true;
       child = spawn("docker", composeArgs, {
@@ -405,9 +407,76 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  if (req.method === "POST" && url.pathname === "/api/extract-images") {
+    if (running) return send(res, 409, { error: "Another job is already running." });
+
+    try {
+      const config = readEnv();
+
+      for (const key of ["PDF_OUTPUT_DIR", "PDF_WORK_DIR"]) {
+        if (!config[key]) throw new Error(`${key} is not configured.`);
+        fs.mkdirSync(config[key], { recursive: true });
+        if (!fs.statSync(config[key]).isDirectory()) {
+          throw new Error(`${key} is not an accessible directory.`);
+        }
+      }
+
+      const selectionPath = path.join(config.PDF_WORK_DIR, "topic-selection.json");
+      if (!fs.existsSync(selectionPath)) {
+        throw new Error("There is no saved procedure selection.");
+      }
+
+      const selection = JSON.parse(fs.readFileSync(selectionPath, "utf8"));
+      if (selection.enabled !== true ||
+          !Array.isArray(selection.selected) ||
+          selection.selected.length === 0) {
+        throw new Error("Enable a non-empty saved selection before extracting images.");
+      }
+
+      const script = path.join(ROOT, "engine/scripts/extract-procedure-jpegs.mjs");
+      if (!fs.existsSync(script)) throw new Error("The JPEG extraction script is missing.");
+
+      logs = [];
+      exitCode = null;
+      startedAt = new Date().toISOString();
+      jobName = "JPEG extraction";
+      addLog(`Starting original JPEG extraction for ${selection.selected.length} selected procedure(s)...`);
+
+      running = true;
+      child = spawn(process.execPath, [script, "--apply"], {
+        cwd: ROOT,
+        env: {
+          ...process.env,
+          PDF_OUTPUT_DIR: config.PDF_OUTPUT_DIR,
+          PDF_WORK_DIR: config.PDF_WORK_DIR
+        },
+        stdio: ["ignore", "pipe", "pipe"]
+      });
+
+      child.stdout.on("data", data => addLog(data.toString()));
+      child.stderr.on("data", data => addLog(data.toString()));
+      child.on("error", error => {
+        addLog(`Could not start JPEG extraction: ${error.message}`);
+        running = false;
+        exitCode = 1;
+        child = null;
+      });
+      child.on("close", code => {
+        addLog(`JPEG extraction process finished with exit code ${code}.`);
+        running = false;
+        exitCode = code;
+        child = null;
+      });
+
+      return send(res, 200, { ok: true });
+    } catch (error) {
+      return send(res, 400, { error: error.message });
+    }
+  }
+
   if (req.method === "POST" && url.pathname === "/api/stop") {
-    if (!running || !child) return send(res, 409, { error: "No publishing job is running." });
-    addLog("Stop requested. Sending interrupt to Docker Compose...");
+    if (!running || !child) return send(res, 409, { error: "No job is running." });
+    addLog(`Stop requested. Interrupting ${jobName || "running job"}...`);
     child.kill("SIGINT");
     return send(res, 200, { ok: true });
   }
